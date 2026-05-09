@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
-<title>ثانوية صفوان بن أمية</title>
+<title>نظام استعلام الدرجات</title>
 
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800&display=swap" rel="stylesheet">
 
@@ -694,8 +694,11 @@
 const SPREADSHEET_ID = '1ty4VIwtzuyxV_p0lp7Jh0yEbOHmTT_u3qo3OUDORez8';
 const SHEET_NAME = 'A';
 
+// أسماء ورقة الإعدادات المقبولة
+const SETTINGS_SHEET_NAMES = ['الإعدادات', 'Settings'];
+
 // ============================================================
-// إعدادات عامة
+// إعدادات افتراضية في حال لم تُقرأ ورقة الإعدادات
 // ============================================================
 const appSettings = {
   schoolName: 'ثانوية صفوان بن أمية',
@@ -704,16 +707,20 @@ const appSettings = {
   systemTitle: 'نظام استعلام الدرجات'
 };
 
-// ============================================================
-// إعدادات الحماية المحلية
-// ============================================================
 const securitySettings = {
-  maxFailedAttempts: 5,      // عدد المحاولات الفاشلة قبل الإيقاف
-  lockMinutes: 10,           // مدة الإيقاف بالدقائق
-  minIdLength: 3,            // أقل طول مقبول لرقم الطالب
-  logLimit: 100              // عدد السجلات المحفوظة في المتصفح
+  maxFailedAttempts: 5,
+  lockMinutes: 1,
+  minIdLength: 1,
+  logLimit: 100
 };
 
+const displaySettings = {
+  hiddenSections: []
+};
+
+// ============================================================
+// مفاتيح التخزين المحلي
+// ============================================================
 const ATTEMPT_STATE_KEY = 'grades_attempt_state_v1';
 const ATTEMPT_LOG_KEY = 'grades_attempt_log_v1';
 
@@ -736,10 +743,104 @@ let currentStudent = null;
 // ============================================================
 // تهيئة الصفحة
 // ============================================================
-document.addEventListener('DOMContentLoaded', function () {
+document.addEventListener('DOMContentLoaded', initializeApp);
+
+async function initializeApp() {
   applyAppSettings();
-  updateLockStatusOnLoad();
-});
+  setStatus('loading', 'جارٍ تحميل الإعدادات...');
+
+  await loadRemoteSettings();
+
+  applyAppSettings();
+
+  if (isSearchLocked()) {
+    const msg = `تم إيقاف البحث مؤقتًا. حاول بعد ${getLockRemainingText()}.`;
+    setStatus('err', msg);
+    showError(msg);
+  } else {
+    setStatus('ok', 'جاهز للاستعلام. أدخل رقم الطالب ثم اضغط بحث.');
+  }
+}
+
+// ============================================================
+// قراءة الإعدادات من Google Sheets
+// ============================================================
+async function loadRemoteSettings() {
+  for (const sheetName of SETTINGS_SHEET_NAMES) {
+    try {
+      const table = await fetchGvizTable(sheetName);
+      const rows = gvizTableToRows(table);
+
+      if (!rows.length) continue;
+
+      applySettingsRows(rows);
+      return true;
+    } catch (e) {
+      console.warn(`لم يتم تحميل ورقة الإعدادات: ${sheetName}`, e);
+    }
+  }
+
+  return false;
+}
+
+function applySettingsRows(rows) {
+  rows.forEach(row => {
+    const key = normalizeSettingKey(row[0]);
+    const value = String(row[1] ?? '').trim();
+
+    if (!key || value === '') return;
+
+    if (['schoolname', 'اسم المدرسة', 'المدرسة'].includes(key)) {
+      appSettings.schoolName = value;
+    }
+
+    else if (['teachername', 'اسم المعلم', 'المعلم', 'اسم الأستاذ', 'اسم الاستاذ'].includes(key)) {
+      appSettings.teacherName = value;
+    }
+
+    else if (['systemtitle', 'عنوان النظام', 'اسم النظام'].includes(key)) {
+      appSettings.systemTitle = value;
+    }
+
+    else if (['stage', 'المرحلة'].includes(key)) {
+      appSettings.stage = value;
+    }
+
+    else if (['maxfailedattempts', 'عدد المحاولات', 'عدد المحاولات الفاشلة', 'محاولات الفشل'].includes(key)) {
+      const n = toNumber(value);
+      if (n > 0) securitySettings.maxFailedAttempts = Math.floor(n);
+    }
+
+    else if (['lockminutes', 'مدة الإيقاف', 'مدة الايقاف', 'مدة الإيقاف بالدقائق', 'مدة الايقاف بالدقائق'].includes(key)) {
+      const n = toNumber(value);
+      if (n > 0) securitySettings.lockMinutes = Math.floor(n);
+    }
+
+    else if (['minidlength', 'أقل طول للرقم', 'اقل طول للرقم', 'أقل طول رقم الطالب', 'اقل طول رقم الطالب'].includes(key)) {
+      const n = toNumber(value);
+      if (n > 0) securitySettings.minIdLength = Math.floor(n);
+    }
+
+    else if (['loglimit', 'عدد السجلات', 'حد السجل'].includes(key)) {
+      const n = toNumber(value);
+      if (n > 0) securitySettings.logLimit = Math.floor(n);
+    }
+
+    else if (['hiddensections', 'الأقسام المخفية', 'الاقسام المخفية', 'إخفاء الأقسام', 'اخفاء الاقسام'].includes(key)) {
+      displaySettings.hiddenSections = value
+        .split(/[,،]/)
+        .map(x => normalizeText(x))
+        .filter(Boolean);
+    }
+  });
+}
+
+function normalizeSettingKey(v) {
+  return String(v || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
 
 function applyAppSettings() {
   document.title = appSettings.schoolName || 'نظام استعلام الدرجات';
@@ -750,24 +851,19 @@ function applyAppSettings() {
 
   if (systemTitle) systemTitle.textContent = appSettings.systemTitle || 'نظام استعلام الدرجات';
   if (pageTitle) pageTitle.textContent = appSettings.schoolName || '';
-  if (pageSubTitle) pageSubTitle.textContent = appSettings.teacherName ? `الأستاذ / ${appSettings.teacherName}` : '';
-}
 
-function updateLockStatusOnLoad() {
-  if (isSearchLocked()) {
-    const msg = `تم إيقاف البحث مؤقتًا. حاول بعد ${getLockRemainingText()}.`;
-    setStatus('err', msg);
-    showError(msg);
+  if (pageSubTitle) {
+    pageSubTitle.textContent = appSettings.teacherName
+      ? `الأستاذ / ${appSettings.teacherName}`
+      : '';
   }
 }
 
 // ============================================================
-// جلب البيانات من Google Sheets
+// جلب جدول بصيغة GViz
 // ============================================================
-async function fetchSheetData() {
-  if (cachedData) return cachedData;
-
-  const url = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(SHEET_NAME)}`;
+async function fetchGvizTable(sheetName) {
+  const url = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
   const response = await fetch(url);
 
   if (!response.ok) {
@@ -778,38 +874,55 @@ async function fetchSheetData() {
   const jsonMatch = text.match(/google\.visualization\.Query\.setResponse\(([\s\S]+)\);?$/);
 
   if (!jsonMatch) {
-    throw new Error('لم يتم التعرف على تنسيق البيانات');
+    throw new Error('لم يتم التعرف على تنسيق البيانات.');
   }
 
   const data = JSON.parse(jsonMatch[1]);
 
   if (data.status === 'error') {
-    throw new Error('خطأ في جلب البيانات');
+    throw new Error('خطأ في جلب البيانات.');
   }
 
-  const table = data.table;
+  return data.table;
+}
 
-  const labels = table.cols.map(col => String(col.label || '').trim());
-
+function gvizTableToRows(table) {
+  const colCount = table.cols.length;
   const rows = [];
+
   for (const row of table.rows) {
     const rowData = [];
 
-    for (let i = 0; i < labels.length; i++) {
+    for (let i = 0; i < colCount; i++) {
       const cell = row.c && row.c[i] ? row.c[i] : null;
 
-      if (cell === null || cell === undefined) {
+      if (!cell) {
         rowData.push('');
       } else {
         const value = cell.f !== undefined && cell.f !== null
           ? String(cell.f)
           : (cell.v !== undefined && cell.v !== null ? String(cell.v) : '');
+
         rowData.push(value);
       }
     }
 
     rows.push(rowData);
   }
+
+  return rows;
+}
+
+// ============================================================
+// جلب بيانات الطلاب
+// ============================================================
+async function fetchSheetData() {
+  if (cachedData) return cachedData;
+
+  const table = await fetchGvizTable(SHEET_NAME);
+
+  const labels = table.cols.map(col => String(col.label || '').trim());
+  const rows = gvizTableToRows(table);
 
   const maxRow = rows[0] ? rows[0].map(v => String(v || '').trim()) : [];
   const studentRows = rows.slice(1);
@@ -871,12 +984,21 @@ async function fetchSheetData() {
     let max = null;
     let maxIndex = null;
 
-    if (maxRaw === 'التالي' || maxRaw.toUpperCase() === 'NEXT') {
+    const maxUpper = maxRaw.toUpperCase();
+
+    if (maxRaw === 'التالي' || maxUpper === 'NEXT') {
       maxType = 'nextColumn';
       maxIndex = i + 1;
-    } else if (maxRaw === 'أعلى الشعبة' || maxRaw.toUpperCase() === 'MAX_BY_CLASS') {
+    } else if (maxRaw === 'أعلى الشعبة' || maxUpper === 'MAX_BY_CLASS') {
       maxType = 'maxByClass';
-    } else if (maxRaw === 'مخفي' || maxRaw.toUpperCase() === 'HIDE') {
+    } else if (
+      maxRaw === 'مخفي القسم' ||
+      maxRaw === 'إخفاء القسم' ||
+      maxRaw === 'اخفاء القسم' ||
+      maxUpper === 'HIDE_SECTION'
+    ) {
+      maxType = 'hiddenSection';
+    } else if (maxRaw === 'مخفي' || maxUpper === 'HIDE') {
       maxType = 'hidden';
     } else if (maxRaw !== '' && !isNaN(maxNumber)) {
       maxType = 'fixed';
@@ -889,9 +1011,29 @@ async function fetchSheetData() {
       item,
       max,
       maxType,
-      maxIndex
+      maxIndex,
+      sectionHidden: false
     });
   }
+
+  const sectionsToHide = new Set();
+
+  cols.forEach(col => {
+    const sectionName = extractSectionInfo(col.section).name;
+
+    if (col.maxType === 'hiddenSection') {
+      sectionsToHide.add(normalizeText(sectionName));
+    }
+
+    if (displaySettings.hiddenSections.includes(normalizeText(sectionName))) {
+      sectionsToHide.add(normalizeText(sectionName));
+    }
+  });
+
+  cols.forEach(col => {
+    const sectionName = extractSectionInfo(col.section).name;
+    col.sectionHidden = sectionsToHide.has(normalizeText(sectionName));
+  });
 
   const parsedRows = studentRows.map(row => {
     const obj = { __cells: {} };
@@ -939,7 +1081,7 @@ function searchStudentInData(model, studentId) {
     return { ok: false, message: 'أدخل رقم الطالب أولًا.' };
   }
 
-  let idCol = model.columns.find(col => col.item.includes('رقم الطالب'));
+  const idCol = model.columns.find(col => col.item.includes('رقم الطالب'));
 
   if (!idCol) {
     return { ok: false, message: 'لم يتم العثور على عمود باسم "رقم الطالب" في جدول البيانات.' };
@@ -1119,7 +1261,7 @@ function registerFailedAttempt(studentId, message) {
 
   if (failedCount >= securitySettings.maxFailedAttempts) {
     lockUntil = getNowMs() + securitySettings.lockMinutes * 60 * 1000;
-    finalMessage = `تم إيقاف البحث مؤقتًا لمدة ${securitySettings.lockMinutes} دقائق بسبب كثرة المحاولات الفاشلة.`;
+    finalMessage = `تم إيقاف البحث مؤقتًا لمدة ${securitySettings.lockMinutes} دقيقة بسبب كثرة المحاولات الفاشلة.`;
   }
 
   saveAttemptState({
@@ -1184,11 +1326,14 @@ async function refreshData() {
 
   hideError();
   setSearchBusy(true);
-  setStatus('loading', 'جارٍ تحديث البيانات من الجدول...');
+  setStatus('loading', 'جارٍ تحديث الإعدادات والبيانات...');
 
   try {
+    await loadRemoteSettings();
+    applyAppSettings();
     await fetchSheetData();
-    setStatus('ok', '✓ تم تحديث البيانات بنجاح.');
+
+    setStatus('ok', '✓ تم تحديث الإعدادات والبيانات بنجاح.');
   } catch (e) {
     console.error(e);
     setStatus('err', 'تعذّر تحديث البيانات.');
@@ -1369,6 +1514,16 @@ function escapeHtml(value) {
     .replace(/'/g, '&#039;');
 }
 
+function normalizeText(v) {
+  return String(v || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/[إأآا]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+    .toLowerCase();
+}
+
 function extractSectionInfo(rawSectionName) {
   const text = String(rawSectionName || '').trim();
   const firstChar = text.charAt(0);
@@ -1398,7 +1553,7 @@ function isFixedItem(item) {
 
 function isHiddenItem(item) {
   const col = columns.find(c => c.item === item);
-  return col && col.maxType === 'hidden';
+  return col && (col.maxType === 'hidden' || col.maxType === 'hiddenSection' || col.sectionHidden);
 }
 
 function getItemMax(student, col) {
@@ -1421,6 +1576,8 @@ function getDynamicSections(student) {
 
   columns.forEach(col => {
     if (col.maxType === 'hidden') return;
+    if (col.maxType === 'hiddenSection') return;
+    if (col.sectionHidden) return;
     if (isFixedItem(col.item)) return;
 
     const sectionInfo = extractSectionInfo(col.section);
@@ -1561,7 +1718,7 @@ function renderStudent(student) {
           </div>
           <div class="score-row">
             <span class="score-label">تنبيه</span>
-            <span class="score-val">أضف أقسامًا وبنودًا في جدول البيانات</span>
+            <span class="score-val">لا توجد أقسام ظاهرة للعرض</span>
           </div>
         </div>
       `}
