@@ -671,7 +671,7 @@
 </div>
 
 <script>
-const APPS_SCRIPT_URL = 'ضع_رابط_الويب_اب_هنا';
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzRztMShnQ6ujQNfv7ho7V1JY6nnWUTH9PqRG7vUQY_bHQwkSEvHj0cr3US43jYPZIIrg/exec';
 
 let appSettings = {
   schoolName: 'ثانوية صفوان بن أمية',
@@ -713,12 +713,11 @@ async function doSearch() {
   hideError();
   res.style.display = 'none';
 
-  if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL === 'https://script.google.com/macros/s/AKfycbzRztMShnQ6ujQNfv7ho7V1JY6nnWUTH9PqRG7vUQY_bHQwkSEvHj0cr3US43jYPZIIrg/exec') {
-    showError('لم يتم وضع رابط Apps Script في الكود.');
-    setStatus('err', 'رابط Apps Script غير مضاف.');
-    return;
-  }
-
+if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL === 'ضع_رابط_الويب_اب_هنا') {
+  showError('لم يتم وضع رابط Apps Script في الكود.');
+  setStatus('err', 'رابط Apps Script غير مضاف.');
+  return;
+}
   if (!input) {
     showError('أدخل رقم الطالب أولًا.');
     return;
